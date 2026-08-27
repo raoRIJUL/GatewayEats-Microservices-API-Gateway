@@ -1,0 +1,134 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: api-gateway
+  cloud:
+    gateway:
+      server:
+        webflux:
+          metrics:
+            enabled: true
+            path-tags:
+              enabled: false
+          httpclient:
+            connect-timeout: 2000
+            response-timeout: 5s
+          routes:
+            - id: user-registration
+              uri: ${USER_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/users/register
+                - Method=POST
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@clientIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 1
+                    redis-rate-limiter.burstCapacity: 3
+                    redis-rate-limiter.requestedTokens: 1
+
+            - id: user-login
+              uri: ${USER_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/users/login
+                - Method=POST
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@clientIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 1
+                    redis-rate-limiter.burstCapacity: 5
+                    redis-rate-limiter.requestedTokens: 1
+
+            - id: user-profile
+              uri: ${USER_SERVICE_URL:http://localhost:8083}
+              predicates:
+                - Path=/users/**
+                - Method=GET,PUT
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userOrIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 3
+                    redis-rate-limiter.burstCapacity: 6
+                    redis-rate-limiter.requestedTokens: 1
+
+            - id: restaurant-read
+              uri: ${RESTAURANT_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/restaurants,/restaurants/**,/items/**
+                - Method=GET
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@publicIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 10
+                    redis-rate-limiter.burstCapacity: 20
+                    redis-rate-limiter.requestedTokens: 1
+                - "RedisResponseCache=${RESTAURANT_CACHE_TTL:30s},${RESTAURANT_CACHE_MAX_ENTRY_SIZE:5MB}"
+
+            - id: restaurant-write
+              uri: ${RESTAURANT_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/restaurants,/restaurants/**,/items/**
+                - Method=POST,PUT,DELETE
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userOrIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 3
+                    redis-rate-limiter.burstCapacity: 6
+                    redis-rate-limiter.requestedTokens: 1
+
+            - id: order-service
+              uri: ${ORDER_SERVICE_URL:http://localhost:8082}
+              predicates:
+                - Path=/orders,/orders/**
+              filters:
+                - name: RequestRateLimiter
+                  args:
+                    key-resolver: "#{@userOrIpKeyResolver}"
+                    redis-rate-limiter.replenishRate: 2
+                    redis-rate-limiter.burstCapacity: 4
+                    redis-rate-limiter.requestedTokens: 1
+
+gateway:
+  redis:
+    shared:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:0}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+    response-cache:
+      host: ${CACHE_REDIS_HOST:localhost}
+      port: ${CACHE_REDIS_PORT:6379}
+      database: ${CACHE_REDIS_DATABASE:1}
+      password: ${CACHE_REDIS_PASSWORD:}
+      timeout: 2s
+
+security:
+  jwt:
+    issuer: ${JWT_ISSUER:food-delivery-user-service}
+    secret: ${JWT_SECRET:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics,gateway
+  endpoint:
+    health:
+      show-details: never
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.cloud.gateway: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} level=%-5level service=${spring.application.name} logger=%logger{36} message=\"%msg\"%n"
